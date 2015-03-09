@@ -171,12 +171,26 @@ system installation.
   :type '(repeat string)
   :group 'ycmd)
 
-(defcustom ycmd-server-args '("--log=debug"
-                              "--keep_logfile"
-                              "--idle_suicide_seconds=10800")
-  "Extra arguments to pass to the ycmd server."
-  :type '(repeat string)
-  :group 'ycmd)
+(defcustom ycmd-server-keep-logfiles t
+  "Whether to keep server log files."
+  :group 'ycmd
+  :type 'boolean)
+
+(defcustom ycmd-server-log-level 'debug
+  "The logging level the ycmd server uses.
+
+The levels are: debug, info, warning, error and critical."
+  :group 'ycmd
+  :type '(choice (const :tag "Debug" debug)
+                 (const :tag "Info" info)
+                 (const :tag "Warning" warning)
+                 (const :tag "Error" error)
+                 (const :tag "Critical" critical)))
+
+(defcustom ycmd-custom-options-file nil
+  "Path to custom options file."
+  :group 'ycmd
+  :type 'string)
 
 (defcustom ycmd-file-parse-result-hook nil
   "Functions to run with file-parse results.
@@ -834,16 +848,39 @@ file."
       (semantic_triggers . ())
       (auto_trigger . 1))))
 
-(defun ycmd--create-options-file (hmac-secret)
+(defun ycmd--read-custom-options-file (hmac-secret)
+  "Read file at `ycmd-custom-options-file' and set HMAC-SECRET.
+
+Return nil if no custom options file is set or if it does not exist"
+  (when ycmd-custom-options-file
+    (if (f-file? ycmd-custom-options-file)
+        (let* ((hmac-secret (base64-encode-string hmac-secret))
+               (json-content (json-read-file ycmd-custom-options-file))
+               (hmac-item (assoc 'hmac_secret json-content)))
+          (when hmac-item
+            (setcdr hmac-item hmac-secret)
+            json-content))
+      (error "Custom options file %s does not exist"
+             ycmd-custom-options-file))))
+
+(defun ycmd--read-or-create-options-file (hmac-secret)
   "This creates a new options file for a ycmd server.
 
 This creates a new tempfile and fills it with options. Returns
 the name of the newly created file."
   (let ((options-file (make-temp-file "ycmd-options"))
-        (options (ycmd--options-contents hmac-secret)))
+        (options (or (ycmd--read-custom-options-file hmac-secret)
+                     (ycmd--options-contents hmac-secret))))
     (with-temp-file options-file
       (insert (ycmd--json-encode options)))
     options-file))
+
+(defun ycmd--get-server-args (options-file)
+  "Create server arguments with OPTIONS-FILE."
+  (list (concat "--options_file=" options-file)
+        (concat "--log=" (symbol-name ycmd-server-log-level))
+        (when ycmd-server-keep-logfiles "--keep_logfiles")
+        "--idle_suicide_seconds=10800"))
 
 (defun ycmd--start-server (hmac-secret)
   "This starts a new server using HMAC-SECRET as its HMAC secret."
@@ -851,9 +888,9 @@ the name of the newly created file."
     (with-current-buffer proc-buff
       (erase-buffer)
 
-      (let* ((options-file (ycmd--create-options-file hmac-secret))
+      (let* ((options-file (ycmd--read-or-create-options-file hmac-secret))
              (server-command ycmd-server-command)
-             (args (apply 'list (concat "--options_file=" options-file) ycmd-server-args))
+             (args (ycmd--get-server-args options-file))
              (server-program+args (append server-command args))
              (proc (apply #'start-process ycmd--server-process proc-buff server-program+args))
              (cont 1))
