@@ -905,7 +905,9 @@ the name of the newly created file."
       (erase-buffer)
 
       (let* ((options-file (ycmd--create-options-file hmac-secret))
-             (server-command ycmd-server-command)
+             (server-command (list (car ycmd-server-command)
+                                   (expand-file-name
+                                    (cadr ycmd-server-command))))
              (args (apply 'list (concat "--options_file=" options-file) ycmd-server-args))
              (server-program+args (append server-command args))
              (proc (apply #'start-process ycmd--server-process proc-buff server-program+args))
