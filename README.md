@@ -207,14 +207,8 @@ provided in this repository. Before running test, you need to install the
 [Cask](http://cask.github.io/) in order to be able to install the package
 dependencies.
 
-You can do this by running
-
-``` shell
-make deps
-```
-
-The other thing that is required is to have the `ycmd` folder right next to
-`emacs-ycmd` (`../ycmd`).
+Another requirement is to have the `ycmd` folder right next to `emacs-ycmd`
+(`../ycmd`).
 
 To run the tests:
 
