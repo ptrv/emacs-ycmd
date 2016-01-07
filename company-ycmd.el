@@ -323,6 +323,16 @@ candidates list."
   (looking-back company-ycmd--include-declaration
                 (line-beginning-position)))
 
+(defun company-ycmd--get-trigger-re ()
+  (pcase (car-safe (ycmd-major-mode-to-file-types major-mode))
+    ("objc" '("\\.\\|->\\|\\[[A-Z_a-z]+[[:word:]]*[[:space:]]"))
+    (_ (cons "\\.\\|->\\|::"  2))))
+
+(defun company-ycmd--grab-symbol-cons ()
+  "Return a string SYMBOL or a cons (SYMBOL . t)."
+  (let ((trigger (company-ycmd--get-trigger-re)))
+    (company-grab-symbol-cons (car trigger) (cdr trigger))))
+
 (defun company-ycmd--prefix ()
   "Prefix-command handler for the company backend."
   (when (ycmd-parsing-in-progress-p)
@@ -334,7 +344,9 @@ candidates list."
        (or (not (company-in-string-or-comment))
            (company-ycmd--in-include))
        (or (and (not (ycmd-parsing-in-progress-p))
-                (company-grab-symbol-cons "\\.\\|->\\|::" 2))
+                (company-ycmd--grab-symbol-cons)
+                ;; (company-grab-symbol-cons "\\.\\|->\\|::" 2)
+                )
            'stop)))
 
 (defun company-ycmd--candidates (prefix)
