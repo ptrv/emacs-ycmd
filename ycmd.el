@@ -118,6 +118,13 @@
 (require 'ycmd-request)
 (require 'ycmd-request-deferred)
 
+;;; Compatibility
+(eval-and-compile
+  ;; TODO Remove when dropping support for Emacs 24
+  (unless (fboundp 'save-mark-and-excursion)
+    (defalias 'save-mark-and-excursion 'save-excursion)))
+
+;;; Customization
 (defgroup ycmd nil
   "a ycmd emacs client"
   :link '(url-link :tag "Github" "https://github.com/abingham/emacs-ycmd")
@@ -940,7 +947,7 @@ the current line.  BUFFER is the current working buffer."
                             (- end-column start-column)))
     (when (> replacement-lines-count 1)
       (setq new-char-delta (- new-char-delta start-column)))
-    (save-excursion
+    (save-mark-and-excursion
       (with-current-buffer buffer
         (delete-region
          (ycmd--col-line-to-position start-column start-line buffer)
@@ -1141,14 +1148,14 @@ When clicked, this will popup MESSAGE."
 
 (defun ycmd--line-start-position (line)
   "Find position at the start of LINE."
-  (save-excursion
+  (save-mark-and-excursion
     (ycmd--goto-line line)
     (beginning-of-line)
     (point)))
 
 (defun ycmd--line-end-position (line)
   "Find position at the end of LINE."
-  (save-excursion
+  (save-mark-and-excursion
     (ycmd--goto-line line)
     (end-of-line)
     (point)))
@@ -1494,7 +1501,7 @@ This is useful for debugging.")
   (when ycmd--log-enabled
     (let ((buffer (get-buffer-create "*ycmd-content-log*")))
       (with-current-buffer buffer
-        (save-excursion
+        (save-mark-and-excursion
           (goto-char (point-max))
           (insert (format "\n%s\n\n" header))
           (insert (pp-to-string content)))))))
