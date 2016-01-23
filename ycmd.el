@@ -5,7 +5,7 @@
 ;; Author: Austin Bingham <austin.bingham@gmail.com>
 ;; Version: 0.9.1
 ;; URL: https://github.com/abingham/emacs-ycmd
-;; Package-Requires: ((emacs "24") (f "0.17.1") (dash "1.2.0") (deferred "0.3.2") (popup "0.5.0"))
+;; Package-Requires: ((emacs "24") (dash "1.2.0") (s "1.11.0") (popup "0.5.0"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -102,21 +102,13 @@
 
 ;;; Code:
 
+(require 's)
 (require 'dash)
-(require 'deferred)
-(require 'f)
 (require 'hmac-def)
 (require 'json)
 (require 'popup)
-;; (require 'request)
-;; (require 'request-deferred)
 (require 'etags)
 
-;; Allow loading of our bundled third-party modules
-(add-to-list 'load-path (f-join (f-dirname (f-this-file)) "third-party"))
-
-(require 'ycmd-request)
-(require 'ycmd-request-deferred)
 
 (defgroup ycmd nil
   "a ycmd emacs client"
@@ -742,7 +734,7 @@ This does nothing if no server is running."
   "Sends an unspecified message to the server.
 
 This is simply for keepalive functionality."
-  (ycmd--request "/healthy" '() :type "GET"))
+  (ycmd--call "/healthy" nil nil :type "GET"))
 
 (defun ycmd-load-conf-file (filename)
   "Tell the ycmd server to load the configuration file FILENAME."
@@ -750,9 +742,11 @@ This is simply for keepalive functionality."
    (list
     (read-file-name "Filename: ")))
   (let ((filename (expand-file-name filename)))
-    (ycmd--request
+    (ycmd--call
      "/load_extra_conf_file"
-     `(("filepath" . ,filename)))))
+     `(("filepath" . ,filename))
+     nil
+     :sync t)))
 
 (defun ycmd-display-completions ()
   "Get completions at the current point and display them in a buffer.
@@ -760,13 +754,11 @@ This is simply for keepalive functionality."
 This is really a utility/debugging function for developers, but
 it might be interesting for some users."
   (interactive)
-  (deferred:$
-    (ycmd-get-completions (current-buffer) (point))
-    (deferred:nextc it
-      (lambda (completions)
-        (pop-to-buffer "*ycmd-completions*")
-        (erase-buffer)
-        (insert (pp-to-string completions))))))
+  (ycmd-get-completions (current-buffer) (point)
+                        (lambda (completions)
+                          (pop-to-buffer "*ycmd-completions*")
+                          (erase-buffer)
+                          (insert (pp-to-string completions)))))
 
 (defun ycmd-toggle-force-semantic-completion ()
   "Toggle whether to use always semantic completion.
@@ -821,7 +813,7 @@ Returns the new value of `ycmd-force-semantic-completion'."
         symbols
       (cdr (assq symbols ycmd-keywords-alist)))))
 
-(defun ycmd-get-completions (buffer pos)
+(defun ycmd-get-completions (buffer pos callback)
   "Get completions in BUFFER for position POS from the ycmd server.
 
 Returns a deferred object which yields the HTTP message
@@ -858,10 +850,7 @@ To see what the returned structure looks like, you can use
                                  'force-semantic))
              (content (ycmd--standard-content-with-extras
                        buffer extra-content)))
-        (ycmd--request
-         "/completions"
-         content
-         :parser 'json-read)))))
+        (ycmd--call "/completions" content callback)))))
 
 (defun ycmd--handle-exception (results)
   "Handle exception in completion RESULTS.
@@ -882,30 +871,22 @@ a results vector as argument."
 
 SUCCESS-HANDLER is called when for a successful response."
   (when ycmd-mode
-    (deferred:$
+    (ycmd--send-completer-command-request
+     type (current-buffer) (point)
+     (lambda (result)
+       (when result
+         (if (assoc-default 'exception result)
+             (ycmd--handle-exception result)
+           (when success-handler
+             (funcall success-handler result))))))))
 
-      (ycmd--send-completer-command-request
-       type (current-buffer) (point))
-
-      (deferred:nextc it
-        (lambda (result)
-          (when result
-            (if (and (not (vectorp result))
-                     (assoc-default 'exception result))
-                (ycmd--handle-exception result)
-              (when success-handler
-                (funcall success-handler result)))))))))
-
-(defun ycmd--send-completer-command-request (type buffer pos)
+(defun ycmd--send-completer-command-request (type buffer pos callback)
   "Send Go To request of TYPE to BUFFER at POS."
   (with-current-buffer buffer
     (goto-char pos)
     (let ((content (cons (list "command_arguments" type)
                          (ycmd--standard-content buffer))))
-      (ycmd--request
-       "/run_completer_command"
-       content
-       :parser 'json-read))))
+      (ycmd--call "/run_completer_command" content callback))))
 
 (defun ycmd-goto ()
   "Go to the definition or declaration of the symbol at current position."
@@ -1357,8 +1338,8 @@ Consider reporting this.")
                (y-or-n-p (format "Load YCMD extra conf %s? " conf-file)))
           (setq location "/load_extra_conf_file")
         (setq location "/ignore_extra_conf_file"))
-      (deferred:sync!
-        (ycmd--request location `((filepath . ,conf-file))))
+
+      (ycmd--call location `((filepath . ,conf-file)) nil :sync t)
       (ycmd--report-status 'unparsed)
       (ycmd-notify-file-ready-to-parse))))
 
@@ -1383,13 +1364,10 @@ Consider reporting this.")
 (defun ycmd--handle-notify-response (results)
   "If RESULTS is a vector or nil, the response is an acual parse result.
 Otherwise the response is probably an exception."
-  (if (or (not results)
-          (vectorp results))
-      (progn
-        (run-hook-with-args 'ycmd-file-parse-result-hook results)
-        (ycmd--report-status 'parsed))
-    (when (assoc 'exception results)
-      (ycmd--handle-exception results))))
+  (if (assoc 'exception results)
+      (ycmd--handle-exception results)
+    (run-hook-with-args 'ycmd-file-parse-result-hook results)
+    (ycmd--report-status 'parsed)))
 
 (defun ycmd-notify-file-ready-to-parse ()
   "Send a notification to ycmd that the buffer is ready to be parsed.
@@ -1408,40 +1386,16 @@ functions in `ycmd-file-parse-result-hook'."
            (content (cons '("event_name" . "FileReadyToParse")
                           (ycmd--standard-content-with-extras
                            buff extra-content))))
-      (deferred:$
-        ;; try
-        (deferred:$
-          ;; Record that the buffer is being parsed
-          (ycmd--report-status 'parsing)
+      ;; Record that the buffer is being parsed
+      (ycmd--report-status 'parsing)
 
-          ;; Make the request.
-          (ycmd--request "/event_notification"
-                         content
-                         :parser 'json-read)
-
-          (deferred:nextc it
-            (lambda (results)
-              (with-current-buffer buff
-                (ycmd--handle-notify-response results)))))
-
-        ;; catch
-        (deferred:error it
-          (lambda (err)
-            (message "Error sending notification request: %s" err)
-            (ycmd--report-status 'errored)))))))
-
-(defun ycmd-display-raw-file-parse-results ()
-  "Request file-parse results and display them in a buffer in raw form.
-
-This is primarily a debug/developer tool."
-  (interactive)
-  (deferred:$
-    (ycmd-notify-file-ready-to-parse)
-    (deferred:nextc it
-      (lambda (content)
-        (pop-to-buffer "*ycmd-file-ready*")
-        (erase-buffer)
-        (insert (pp-to-string content))))))
+      ;; Make the request.
+      (ycmd--call
+       "/event_notification" content
+       (lambda (results)
+         (with-current-buffer buff
+           (ycmd--handle-notify-response results)))
+       :no-buffer-pos-check t))))
 
 (defun ycmd-major-mode-to-file-types (mode)
   "Map a major mode MODE to a list of file-types suitable for ycmd.
@@ -1636,30 +1590,25 @@ This is useful for debugging.")
   (when ycmd-mode
     (let ((buffer (current-buffer)))
 
-      (deferred:$
-        (let ((content (ycmd--standard-content buffer)))
-          (ycmd--request
-           "/debug_info"
-           content
-           :parser 'json-read))
-
-        (deferred:nextc it
-          (lambda (res)
-            (when res
-              (with-help-window (get-buffer-create " *ycmd-debug-info*")
-                (with-current-buffer standard-output
-                  (princ "ycmd debug information for buffer ")
-                  (insert (propertize (buffer-name buffer) 'face 'bold))
-                  (princ " in ")
-                  (let ((mode (buffer-local-value 'major-mode buffer)))
-                    (insert-button (symbol-name mode)
-                                   'type 'help-function
-                                   'help-args (list mode)))
-                  (princ ":\n\n")
-                  (insert res)
-                  (princ "\n\n")
-                  (insert (format "Server running at: %s:%d"
-                                  ycmd-host ycmd--server-actual-port)))))))))))
+      (let ((content (ycmd--standard-content buffer)))
+        (ycmd--call
+         "/debug_info" content
+         (lambda (res)
+           (when res
+             (with-help-window (get-buffer-create " *ycmd-debug-info*")
+               (with-current-buffer standard-output
+                 (princ "ycmd debug information for buffer ")
+                 (insert (propertize (buffer-name buffer) 'face 'bold))
+                 (princ " in ")
+                 (let ((mode (buffer-local-value 'major-mode buffer)))
+                   (insert-button (symbol-name mode)
+                                  'type 'help-function
+                                  'help-args (list mode)))
+                 (princ ":\n\n")
+                 (insert res)
+                 (princ "\n\n")
+                 (insert (format "Server running at: %s:%d"
+                                 ycmd-host ycmd--server-actual-port)))))))))))
 
 (defun ycmd--get-request-hmac (method path body)
   "Generate HMAC for request from METHOD, PATH and BODY."
@@ -1670,29 +1619,21 @@ This is useful for debugging.")
               `(,method ,path ,(or body "")) "")
    ycmd--hmac-secret))
 
-(defun* ycmd--request (location
-                       content
-                       &key (parser 'buffer-string) (type "POST"))
+(cl-defun ycmd--call (location content callback
+                               &key
+                               (sync nil)
+                               (type "POST")
+                               (no-buffer-pos-check nil))
   "Send an asynchronous HTTP request to the ycmd server.
 
 This starts the server if necessary.
-
-Returns a deferred object which resolves to the content of the
-response message.
 
 LOCATION specifies the location portion of the URL. For example,
 if LOCATION is '/feed_llama', the request URL is
 'http://host:port/feed_llama'.
 
 CONTENT will be JSON-encoded and sent over at the content of the
-HTTP message.
-
-PARSER specifies the function that will be used to parse the
-response to the message. Typical values are buffer-string and
-json-read. This function will be passed an the completely
-unmodified contents of the response (i.e. not JSON-decoded or
-anything like that.)
-"
+HTTP message."
   (unless (ycmd-running?) (ycmd-open))
 
   (let* ((url-show-status (not ycmd-hide-url-status))
@@ -1701,24 +1642,59 @@ anything like that.)
          (ycmd-request-backend 'url-retrieve)
          (content (json-encode content))
          (hmac (ycmd--get-request-hmac type location content))
-         (encoded-hmac (base64-encode-string hmac 't)))
+         (encoded-hmac (base64-encode-string hmac 't))
+         (url-request-method type)
+         (url-request-extra-headers `(("Content-Type" . "application/json")
+                                      ("X-Ycm-Hmac" . ,encoded-hmac)))
+         (url-request-data content)
+         (url (format "http://%s:%s%s"
+                      ycmd-host ycmd--server-actual-port location)))
+
     (ycmd--log-content "HTTP REQUEST CONTENT" content)
 
-    (deferred:$
+    (if sync (url-retrieve-synchronously url t)
+      (url-retrieve
+       url
+       (ycmd--create-response-handler location callback no-buffer-pos-check)
+       nil t))))
 
-      (ycmd-request-deferred
-       (format "http://%s:%s%s" ycmd-host ycmd--server-actual-port location)
-       :headers `(("Content-Type" . "application/json")
-                  ("X-Ycm-Hmac" . ,encoded-hmac))
-       :parser parser
-       :data content
-       :type type)
+(defun ycmd--create-response-handler (location callback no-buffer-pos-check)
+  (let ((ycmd--request-point (point))
+        (ycmd--request-buffer (current-buffer))
+        (ycmd--request-window (selected-window))
+        (ycmd--request-tick (buffer-chars-modified-tick)))
+    (lambda (_status)
+      (let ((http-buffer (current-buffer)))
+        (unwind-protect
+            (if (or (not (equal ycmd--request-window (selected-window)))
+                    (with-current-buffer (window-buffer ycmd--request-window)
+                      (or (not (equal ycmd--request-buffer (current-buffer)))
+                          (and (not no-buffer-pos-check)
+                               (or (not (equal ycmd--request-point (point)))
+                                   (not (equal ycmd--request-tick
+                                               (buffer-chars-modified-tick))))))))
+                (message "Skip ycmd %s response" location)
+              (goto-char url-http-end-of-headers)
+              (let* ((json-array-type 'list)
+                     (response (condition-case nil
+                                   (json-read)
+                                 (json-readtable-error
+                                  (progn
+                                    (let ((response-string (buffer-string)))
+                                      (pop-to-buffer
+                                       (with-current-buffer (get-buffer-create "*ycmd-response*")
+                                         (insert response-string)
+                                         (goto-char (point-min))
+                                         (current-buffer))))
+                                    (error "Can't read ycmd server response"))))))
+                (with-current-buffer ycmd--request-buffer
+                  ;; Terminate `apply' call with empty list so response
+                  ;; will be treated as single argument.
+                  (ycmd--log-content "HTTP RESPONSE CONTENT" response)
+                  (when callback
+                    (apply callback response nil)))))
+          (kill-buffer http-buffer))))))
 
-      (deferred:nextc it
-        (lambda (req)
-          (let ((content (ycmd-request-response-data req)))
-            (ycmd--log-content "HTTP RESPONSE CONTENT" content)
-            content))))))
 
 (provide 'ycmd)
 

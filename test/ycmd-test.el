@@ -97,12 +97,15 @@ the server's response,"
     `(ert-deftest ,full-name ()
        (let* ((buff (ycmd-test-prepare-file ,filename ,mode))
               (current-position (ycmd--col-line-to-position ,column ,line buff)))
-         (deferred:sync!
-           (deferred:$
-             (funcall ,request-func buff current-position)
-             (deferred:nextc it
-               (lambda (response)
-                 ,@body))))
+         (with-current-buffer buff
+           (funcall ,request-func buff current-position
+                    (lambda (response)
+                      ,@body)))
+         ;; (deferred:sync!
+         ;;   (deferred:$
+
+         ;;     (deferred:nextc it
+         ;;       )))
          (kill-buffer buff)))))
 
 (ycmd-ert-test-deferred get-completions "test.cpp" 'c++-mode

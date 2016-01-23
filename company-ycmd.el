@@ -273,29 +273,23 @@ candidates list."
 
 (defun company-ycmd--get-candidates (cb prefix)
   "Call CB with completion candidates for PREFIX at the current point."
-  (deferred:$
+  (when (ycmd-running?)
+    (ycmd-get-completions
+     (current-buffer) (point)
+     (lambda (result)
+       (if (assoc-default 'exception result)
 
-    (deferred:try
-      (deferred:$
-        (if (ycmd-running?)
-            (ycmd-get-completions (current-buffer) (point))))
-      :catch (lambda (err) nil))
+           (let ((msg (assoc-default 'message result nil "unknown error")))
+             (message "Exception while fetching candidates: %s" msg)
+             '())
 
-    (deferred:nextc it
-      (lambda (c)
-        (if (assoc-default 'exception c)
-
-            (let ((msg (assoc-default 'message c nil "unknown error")))
-              (message "Exception while fetching candidates: %s" msg)
-              '())
-
-          (funcall
-           cb
-           (company-ycmd--construct-candidates
-            (assoc-default 'completions c)
-            prefix
-            (assoc-default 'completion_start_column c)
-            (company-ycmd--get-construct-candidate-fn))))))))
+         (funcall
+          cb
+          (company-ycmd--construct-candidates
+           (assoc-default 'completions result)
+           prefix
+           (assoc-default 'completion_start_column result)
+           (company-ycmd--get-construct-candidate-fn))))))))
 
 (defun company-ycmd--meta (candidate)
   "Fetch the metadata text-property from a CANDIDATE string."
