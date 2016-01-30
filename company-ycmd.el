@@ -107,26 +107,27 @@ feature."
   (let ((insertion-text (assoc-default 'insertion_text candidate)))
     (s-starts-with? prefix insertion-text t)))
 
-(defun company-ycmd--filename-completer-p (extra-info)
-  "Check whether candidate's EXTRA-INFO indicates a filename completion."
-  (-contains? '("[File]" "[Dir]" "[File&Dir]") extra-info))
+(defun company-ycmd--filename-completer-p (kind)
+  "Check whether candidate's KIND indicates a filename completion."
+  (-contains? '("[File]" "[Dir]" "[File&Dir]") kind))
 
-(defun company-ycmd--identifier-completer-p (extra-info)
-  "Check if candidate's EXTRA-INFO indicates a identifier completion."
-  (s-equals? "[ID]" extra-info))
+(defun company-ycmd--identifier-completer-p (kind)
+  "Check if candidate's KIND indicates a identifier completion."
+  (s-equals? "[ID]" kind))
 
 (defmacro company-ycmd--with-destructured-candidate (candidate body)
   "Destructure CANDIDATE and evaluate BODY."
   (declare (indent 1) (debug t))
   `(let ((insertion-text (assoc-default 'insertion_text candidate))
-         (detailed-info (assoc-default 'detailed_info candidate))
+         (typed-string (assoc-default 'typed_string candidate))
+         (display-string (assoc-default 'display_string candidate))
+         (doc-string (assoc-default 'doc_string candidate))
+         (result-type (assoc-default 'result_type candidate))
          (kind (assoc-default 'kind candidate))
-         (extra-menu-info (assoc-default 'extra_menu_info candidate))
-         (menu-text (assoc-default 'menu_text candidate))
          (extra-data (assoc-default 'extra_data candidate)))
-     (if (or (company-ycmd--identifier-completer-p extra-menu-info)
-             (company-ycmd--filename-completer-p extra-menu-info))
-         (propertize insertion-text 'return_type extra-menu-info)
+     (if (or (company-ycmd--identifier-completer-p kind)
+             (company-ycmd--filename-completer-p kind))
+         (propertize insertion-text 'return_type kind)
        ,body)))
 
 (defun company-ycmd--extract-params-cpp (function-signature)
@@ -166,48 +167,30 @@ feature."
 Returns a list with one candidate or multiple candidates for
 overloaded functions."
   (company-ycmd--with-destructured-candidate candidate
-    (let* ((overloaded-functions (and (company-ycmd--extended-features-p)
-                                      company-ycmd-insert-arguments
-                                      (stringp detailed-info)
-                                      (s-split "\n" detailed-info t)))
-           (items (or overloaded-functions (list menu-text)))
-           candidates)
-      (dolist (it (delete-dups items) candidates)
-        (let* ((meta (if overloaded-functions it detailed-info))
-               (params (company-ycmd--extract-params-cpp it))
-               (return-type (or (and overloaded-functions
-                                     (string-match
-                                      (concat "\\(.*\\) "
-                                              (regexp-quote insertion-text))
-                                      it)
-                                     (match-string 1 it))
-                                extra-menu-info))
-               (kind (company-ycmd--convert-kind-cpp kind))
-               (doc (cdr (assoc 'doc_string extra-data))))
-          (setq candidates
-                (cons (propertize insertion-text 'return_type return-type
-                                  'meta meta 'kind kind 'doc doc 'params params)
-                      candidates)))))))
+    (let* ((meta (concat result-type (when result-type " ") display-string))
+           (params (company-ycmd--extract-params-cpp display-string))
+           (kind (company-ycmd--convert-kind-cpp kind)))
+      (propertize insertion-text 'return_type result-type
+                  'meta meta 'kind kind 'doc doc-string 'params params))))
 
 (defun company-ycmd--construct-candidate-go (candidate)
   "Construct completion string from a CANDIDATE for go file-types."
   (company-ycmd--with-destructured-candidate candidate
-    (let* ((is-func (and extra-menu-info
-                         (string-prefix-p "func" extra-menu-info)))
-           (meta (and kind menu-text extra-menu-info
-                      (concat kind " " menu-text
+    (let* ((is-func (and kind (string-match-p "func" kind)))
+           (meta (and kind result-type
+                      (concat kind " " insertion-text
                               (if is-func
-                                  (substring extra-menu-info 4 nil)
-                                (concat " " extra-menu-info)))))
-           (return-type (and extra-menu-info
-                             (string-match "^func(.*) \\(.*\\)" extra-menu-info)
-                             (match-string 1 extra-menu-info)))
-           (params (and extra-menu-info
-                        (or (string-match "^func\\((.*)\\) .*" extra-menu-info)
-                            (string-match "^func\\((.*)\\)\\'" extra-menu-info))
-                        (match-string 1 extra-menu-info)))
-           (kind (if (and extra-menu-info (not is-func))
-                     (concat kind ": " extra-menu-info)
+                                  (substring result-type 4 nil)
+                                (concat " " result-type)))))
+           (return-type (and result-type
+                             (string-match "^func(.*) \\(.*\\)" result-type)
+                             (match-string 1 result-type)))
+           (params (and result-type
+                        (or (string-match "^func\\((.*)\\) .*" result-type)
+                            (string-match "^func\\((.*)\\)\\'" result-type))
+                        (match-string 1 result-type)))
+           (kind (if (and result-type (not is-func))
+                     (concat kind ": " result-type)
                    kind)))
       (propertize insertion-text 'return_type return-type
                   'meta meta 'kind kind 'params params))))
@@ -215,15 +198,15 @@ overloaded functions."
 (defun company-ycmd--construct-candidate-python (candidate)
   "Construct completion string from a CANDIDATE for python file-types."
   (company-ycmd--with-destructured-candidate candidate
-    (let* ((kind extra-menu-info)
-           (meta (and detailed-info
-                      (or (and (string-match "\n" detailed-info)
-                               (substring detailed-info 0 (match-beginning 0)))
-                          detailed-info)))
+    (let* ((kind result-type)
+           (meta (and doc-string
+                      (or (and (string-match "\n" doc-string)
+                               (substring doc-string 0 (match-beginning 0)))
+                          doc-string)))
            (location (assoc-default 'location extra-data))
            (filepath (assoc-default 'filepath location))
            (line-num (assoc-default 'line_num location)))
-      (propertize insertion-text 'meta meta 'doc detailed-info 'kind kind
+      (propertize insertion-text 'meta meta 'doc doc-string 'kind kind
                   'filepath filepath 'line_num line-num))))
 
 (defun company-ycmd--construct-candidate-generic (candidate)
