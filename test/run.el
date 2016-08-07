@@ -54,6 +54,7 @@
            (ycmd-path (expand-file-name (pop argv) source-directory))
            (ycmd-server-command (list python-path ycmd-path))
            (ert-selector (pop argv)))
+      (message "request-backend: %s" request-backend)
       (unless (f-exists? ycmd-path)
         (error "Ycmd path does not exist"))
       (ert-run-tests-batch-and-exit (and "ycmd-" ert-selector)))))
