@@ -53,7 +53,10 @@
       (load (expand-file-name "ycmd-test" (file-name-directory ycmd-runner-file))))
 
     (let* ((debug-on-error t)
-           (ycmd-path (expand-file-name (pop argv) source-directory))
+           (ycmd-path-raw (pop argv))
+           (ycmd-path (if (file-name-absolute-p ycmd-path-raw)
+                          ycmd-path-raw
+                        (expand-file-name ycmd-path-raw source-directory)))
            (ycmd-server-command (list python-path ycmd-path))
            (ert-selector (pop argv)))
       (unless (f-exists? ycmd-path)
