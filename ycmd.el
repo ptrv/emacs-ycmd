@@ -154,6 +154,18 @@ Options are:
   "The host on which the ycmd server is running."
   :type '(string))
 
+(defcustom ycmd-server-python-interpreter "python"
+  "Python interpreter to run the ycmd server."
+  :type 'string)
+
+(defcustom ycmd-server-python-interpreter-args nil
+  "Arguments to pass to `ycmd-server-python-interpreter'."
+  :type 'string)
+
+(defcustom ycmd-server-program-path nil
+  "Path to the python server program."
+  :type 'string)
+
 (defcustom ycmd-server-command nil
   "The ycmd server program command.
 
@@ -162,6 +174,8 @@ Example value:
 
 \(set-variable 'ycmd-server-command (\"python\" \"/path/to/ycmd/package/\"))"
   :type '(repeat string))
+(make-obsolete-variable 'ycmd-server-command
+                        'ycmd-server-program-path "0.9.2")
 
 (defcustom ycmd-server-args '("--log=debug"
                               "--keep_logfile"
@@ -1739,10 +1753,24 @@ the name of the newly created file."
       (ycmd--with-all-ycmd-buffers
         (ycmd--report-status status)))))
 
+(defun ycmd--get-server-command ()
+  (or ycmd-server-command
+      (let (command)
+        (dolist (it '(ycmd-server-python-interpreter
+                      ycmd-server-python-interpreter-args
+                      ycmd-server-program-path)
+                    command)
+          (unless (s-blank? it)
+            (append command it))))))
+
 (defun ycmd--start-server (hmac-secret)
   "Start a new server using HMAC-SECRET."
-  (unless ycmd-server-command
-    (user-error "Error: The variable `ycmd-server-command' is not set.  \
+  (unless (or ycmd-server-command
+              (and ycmd-server-python-interpreter
+                   ycmd-server-program-path))
+    (user-error "Error: The variable \
+`ycmd-server-python-interpreter' and/or \
+`ycmd-server-program-path' are not set.  \
 See the docstring of the variable for an example"))
   (let ((proc-buff (get-buffer-create ycmd--server-buffer-name)))
     (with-current-buffer proc-buff
@@ -1751,7 +1779,8 @@ See the docstring of the variable for an example"))
     (let* ((options-file (ycmd--create-options-file hmac-secret))
            (args (apply 'list (concat "--options_file=" options-file)
                         ycmd-server-args))
-           (server-program+args (append ycmd-server-command args))
+           (server-command (ycmd--get-server-command))
+           (server-program+args (append server-command args))
            (proc (apply #'start-process ycmd--server-process-name proc-buff
                         server-program+args))
            (server-start-time (float-time))
