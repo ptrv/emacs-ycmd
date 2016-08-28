@@ -947,6 +947,16 @@ Returns the new value of `ycmd-force-semantic-completion'."
         symbols
       (cdr (assq symbols ycmd-keywords-alist)))))
 
+(defmacro ycmd--with-context (&rest body)
+  "Get context information and execute BODY.
+The macro binds the variables `buffer', `point' and `content'."
+  (declare (indent 0) (debug t))
+  `(when ycmd-mode
+     (let* ((buffer (current-buffer))
+            (point (point))
+            (content (ycmd--standard-content buffer point)))
+       ,@body)))
+
 (defun ycmd-get-completions (&optional sync)
   "Get completions in current buffer from the ycmd server.
 
@@ -976,18 +986,14 @@ To see what the returned structure looks like, you can use
 
 If SYNC is non-nil the function does not return a deferred object
 and blocks until the request has finished."
-  (when ycmd-mode
-    (let* ((buffer (current-buffer))
-           (pos (point))
-           (content
-            (append (ycmd--standard-content buffer pos)
-                    (and ycmd-force-semantic-completion
-                         (list (cons "force_semantic" t))))))
-      (ycmd--request
-       "/completions"
-       content
-       :parser 'json-read
-       :sync sync))))
+  (ycmd--with-context
+    (ycmd--request
+     "/completions"
+     (append content
+             (and ycmd-force-semantic-completion
+                  (list (cons "force_semantic" t))))
+     :parser 'json-read
+     :sync sync)))
 
 (defun ycmd--handle-exception (result)
   "Handle exception in completion RESULT.
@@ -1005,15 +1011,18 @@ This function handles `UnknownExtraConf', `ValueError' and
   "Send SUBCOMMAND to the `ycmd' server.
 
 SUCCESS-HANDLER is called when for a successful response."
-  (when ycmd-mode
+  (ycmd--with-context
     (if (ycmd-parsing-in-progress-p)
         (message "Can't send \"%s\" request while parsing is in progress!"
                  subcommand)
-      (let ((request-buffer (current-buffer))
-            (request-point (point)))
+      (let ((content (cons (append (list "command_arguments")
+                                   (if (listp subcommand)
+                                       subcommand
+                                     (list subcommand)))
+                           content)))
         (deferred:$
-          (ycmd--send-completer-command-request
-           subcommand request-buffer request-point)
+          (ycmd--request "/run_completer_command"
+                         content :parser 'json-read)
           (deferred:nextc it
             (lambda (result)
               (when result
@@ -1023,24 +1032,9 @@ SUCCESS-HANDLER is called when for a successful response."
                       (ycmd--handle-exception result)
                       (run-hook-with-args
                        'ycmd-after-exception-hook
-                       subcommand request-buffer request-point result))
+                       subcommand buffer point result))
                   (when success-handler
                     (funcall success-handler result)))))))))))
-
-(defun ycmd--send-completer-command-request (subcommand &optional buffer pos)
-  "Send completer SUBCOMMAND for BUFFER at POS."
-  (let* ((buffer (or buffer (current-buffer)))
-         (pos (or pos (point)))
-         (subcommand (if (listp subcommand)
-                         subcommand
-                       (list subcommand)))
-         (content (cons (append (list "command_arguments")
-                                subcommand)
-                        (ycmd--standard-content buffer pos))))
-    (ycmd--request
-     "/run_completer_command"
-     content
-     :parser 'json-read)))
 
 (defun ycmd-goto ()
   "Go to the definition or declaration of the symbol at current position."
@@ -1631,20 +1625,18 @@ Otherwise the response is probably an exception."
   "Send a simple event notification for EVENT-NAME to the
 server, ignoring response. Optionally, include EVENT-CONTENT-ALIST
 as additional content in the request."
-  (let* ((buff (current-buffer))
-         (pos (point))
-         (content (append (cons `("event_name" . ,event-name)
-                                (ycmd--standard-content buff pos))
-                          event-content-alist)))
-    (deferred:$
-      ;; try
-      (ycmd--request "/event_notification"
-                     content
-                     :parser 'json-read)
-      (deferred:error it
-        (lambda (err)
-          (message "Error sending %s request: %s" event-name err)
-          (ycmd--report-status 'errored))))))
+  (ycmd--with-context
+    (let ((content (append `(("event_name" . ,event-name))
+                           content event-content-alist)))
+      (deferred:$
+        ;; try
+        (ycmd--request "/event_notification"
+                       content
+                       :parser 'json-read)
+        (deferred:error it
+          (lambda (err)
+            (message "Error sending %s request: %s" event-name err)
+            (ycmd--report-status 'errored)))))))
 
 (defun ycmd-notify-file-ready-to-parse ()
   "Send a notification to ycmd that the buffer is ready to be parsed.
@@ -1654,39 +1646,38 @@ function enforces that constraint.
 
 The results of the notification are passed to all of the
 functions in `ycmd-file-parse-result-hook'."
-  (when (and ycmd-mode (not (ycmd-parsing-in-progress-p)))
-    (let* ((buff (current-buffer))
-           (pos (point))
-           (content
-            (append '(("event_name" . "FileReadyToParse"))
-                    (ycmd--standard-content buff pos)
-                    (--when-let (and ycmd-tag-files
-                                     (ycmd--get-tag-files buff))
-                      (list (cons "tag_files" it)))
-                    (--when-let (and ycmd-seed-identifiers-with-keywords
-                                     (ycmd--get-keywords buff))
-                      (list (cons "syntax_keywords" it))))))
-      (deferred:$
-        ;; try
+  (ycmd--with-context
+    (unless (ycmd-parsing-in-progress-p)
+      (let ((content
+             (append '(("event_name" . "FileReadyToParse"))
+                     content
+                     (--when-let (and ycmd-tag-files
+                                      (ycmd--get-tag-files buffer))
+                       (list (cons "tag_files" it)))
+                     (--when-let (and ycmd-seed-identifiers-with-keywords
+                                      (ycmd--get-keywords buffer))
+                       (list (cons "syntax_keywords" it))))))
         (deferred:$
-          ;; Record that the buffer is being parsed
-          (ycmd--report-status 'parsing)
+          ;; try
+          (deferred:$
+            ;; Record that the buffer is being parsed
+            (ycmd--report-status 'parsing)
 
-          ;; Make the request.
-          (ycmd--request "/event_notification"
-                         content
-                         :parser 'json-read)
+            ;; Make the request.
+            (ycmd--request "/event_notification"
+                           content
+                           :parser 'json-read)
 
-          (deferred:nextc it
-            (lambda (results)
-              (with-current-buffer buff
-                (ycmd--handle-notify-response results)))))
+            (deferred:nextc it
+              (lambda (results)
+                (with-current-buffer buffer
+                  (ycmd--handle-notify-response results)))))
 
-        ;; catch
-        (deferred:error it
-          (lambda (err)
-            (message "Error sending notification request: %s" err)
-            (ycmd--report-status 'errored)))))))
+          ;; catch
+          (deferred:error it
+            (lambda (err)
+              (message "Error sending notification request: %s" err)
+              (ycmd--report-status 'errored))))))))
 
 (defun ycmd-major-mode-to-file-types (mode)
   "Map a major mode MODE to a list of file-types suitable for ycmd.
@@ -1934,34 +1925,26 @@ This is useful for debugging.")
 (defun ycmd-show-debug-info ()
   "Show debug information."
   (interactive)
-  (when ycmd-mode
-    (let ((buffer (current-buffer))
-          (pos (point)))
-
-      (deferred:$
-        (let ((content (ycmd--standard-content buffer pos)))
-          (ycmd--request
-           "/debug_info"
-           content
-           :parser 'json-read))
-
-        (deferred:nextc it
-          (lambda (res)
-            (when res
-              (with-help-window (get-buffer-create " *ycmd-debug-info*")
-                (with-current-buffer standard-output
-                  (princ "ycmd debug information for buffer ")
-                  (insert (propertize (buffer-name buffer) 'face 'bold))
-                  (princ " in ")
-                  (let ((mode (buffer-local-value 'major-mode buffer)))
-                    (insert-button (symbol-name mode)
-                                   'type 'help-function
-                                   'help-args (list mode)))
-                  (princ ":\n\n")
-                  (insert res)
-                  (princ "\n\n")
-                  (insert (format "Server running at: %s:%d"
-                                  ycmd-host ycmd--server-actual-port)))))))))))
+  (ycmd--with-context
+    (deferred:$
+      (ycmd--request "/debug_info" content :parser 'json-read)
+      (deferred:nextc it
+        (lambda (res)
+          (when res
+            (with-help-window (get-buffer-create " *ycmd-debug-info*")
+              (with-current-buffer standard-output
+                (princ "ycmd debug information for buffer ")
+                (insert (propertize (buffer-name request-buffer) 'face 'bold))
+                (princ " in ")
+                (let ((mode (buffer-local-value 'major-mode buffer)))
+                  (insert-button (symbol-name mode)
+                                 'type 'help-function
+                                 'help-args (list mode)))
+                (princ ":\n\n")
+                (insert res)
+                (princ "\n\n")
+                (insert (format "Server running at: %s:%d"
+                                ycmd-host ycmd--server-actual-port))))))))))
 
 (defun ycmd--get-request-hmac (method path body)
   "Generate HMAC for request from METHOD, PATH and BODY."
