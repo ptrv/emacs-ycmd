@@ -645,7 +645,8 @@ Otherwise behave as if called interactively.
   (cond
    (ycmd-mode
     (dolist (hook ycmd-hooks-alist)
-      (add-hook (car hook) (cdr hook) nil 'local)))
+      (add-hook (car hook) (cdr hook) nil 'local))
+    (unless (ycmd-running?) (ycmd-open)))
    (t
     (dolist (hook ycmd-hooks-alist)
       (remove-hook (car hook) (cdr hook) 'local))
@@ -740,7 +741,7 @@ _LEN is ununsed."
 
 (defun ycmd--on-visit-buffer ()
   "If `ycmd--buffer-visit-flag' is nil send BufferVisit event."
-  (unless ycmd--buffer-visit-flag
+  (when (and (not ycmd--buffer-visit-flag) (ycmd-running?))
     (ycmd--notify-server "BufferVisit")
     (setq ycmd--buffer-visit-flag t)))
 
@@ -1647,7 +1648,8 @@ function enforces that constraint.
 
 The response of the notification are passed to all of the
 functions in `ycmd-file-parse-result-hook'."
-  (when (and ycmd-mode (not (ycmd-parsing-in-progress-p)))
+  (when (and ycmd-mode (ycmd-running?)
+             (not (ycmd-parsing-in-progress-p)))
     (let* ((data (ycmd--get-request-data))
            (buff (plist-get data :buffer))
            (content
@@ -1956,12 +1958,12 @@ This is useful for debugging.")
                          (params nil)
                          (sync nil)
                          (timeout request-timeout))
-  "Send an asynchronous HTTP request to the ycmd server.
+  "Send a http request to the ycmd server.
 
-This starts the server if necessary.
+When request sent asynchronously, return a deferred object which
+resolves to the content of the response message.
 
-Returns a deferred object which resolves to the content of the
-response message.
+If SYNC is nil, return the result of the request.
 
 LOCATION specifies the location portion of the URL. For example,
 if LOCATION is '/feed_llama', the request URL is
@@ -1974,10 +1976,7 @@ PARSER specifies the function that will be used to parse the
 response to the message. Typical values are buffer-string and
 json-read. This function will be passed an the completely
 unmodified contents of the response (i.e. not JSON-decoded or
-anything like that.)
-"
-  (unless (ycmd-running?) (ycmd-open))
-
+anything like that)."
   (let* ((url-show-status (not ycmd-hide-url-status))
          (url-proxy-services (unless ycmd-bypass-url-proxy-services
                                url-proxy-services))
