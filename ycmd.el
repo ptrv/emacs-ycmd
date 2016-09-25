@@ -561,6 +561,14 @@ and `delete-process'.")
     (define-key map "gp" 'ycmd-goto-imprecise)
     (define-key map "gr" 'ycmd-goto-references)
     (define-key map "gt" 'ycmd-goto-type)
+    (define-key map "4." 'ycmd-goto-other-window)
+    (define-key map "4gi" 'ycmd-goto-include-other-window)
+    (define-key map "4gd" 'ycmd-goto-definition-other-window)
+    (define-key map "4gD" 'ycmd-goto-declaration-other-window)
+    (define-key map "4gm" 'ycmd-goto-implementation-other-window)
+    (define-key map "4gp" 'ycmd-goto-imprecise-other-window)
+    (define-key map "4gr" 'ycmd-goto-references-other-window)
+    (define-key map "4gt" 'ycmd-goto-type-other-window)
     (define-key map "s" 'ycmd-toggle-force-semantic-completion)
     (define-key map "v" 'ycmd-show-debug-info)
     (define-key map "d" 'ycmd-show-documentation)
@@ -1068,46 +1076,111 @@ SUCCESS-HANDLER is called when for a successful response."
                   (when success-handler
                     (funcall success-handler response)))))))))))
 
+(defun ycmd--get-defined-subcommands (&optional request-data)
+  "Return defined subcommands for current filetype completer.
+REQUEST-DATA is the plist retrieved from
+`ycmd--get-request-data'."
+  (when ycmd-mode
+    (let ((data (or request-data (ycmd--get-request-data))))
+      (ycmd--request "/defined_subcommands"
+                     (plist-get data :content)
+                     :parser 'json-read :sync t))))
+
+(defun ycmd--semantic-completion-available? (&optional request-data)
+  (when ycmd-mode
+    (let ((data (or request-data (ycmd--get-request-data))))
+      (ycmd--request "/semantic_completion_available"
+                     (plist-get data :content)
+                     :parser 'json-read :sync t))))
+
 (defun ycmd-goto ()
   "Go to the definition or declaration of the symbol at current position."
   (interactive)
   (ycmd--goto "GoTo"))
+
+(defun ycmd-goto-other-window ()
+  "Go to the definition or declaration of the symbol at current position.
+Open result in another window."
+  (interactive)
+  (ycmd--goto "GoTo" :other-window))
 
 (defun ycmd-goto-declaration ()
   "Go to the declaration of the symbol at the current position."
   (interactive)
   (ycmd--goto "GoToDeclaration"))
 
+(defun ycmd-goto-declaration-other-window ()
+  "Go to the declaration of the symbol at the current position.
+Open result in another window."
+  (interactive)
+  (ycmd--goto "GoToDeclaration" :other-window))
+
 (defun ycmd-goto-definition ()
   "Go to the definition of the symbol at the current position."
   (interactive)
   (ycmd--goto "GoToDefinition"))
+
+(defun ycmd-goto-definition-other-window ()
+  "Go to the definition of the symbol at the current position.
+Open result in other windows."
+  (interactive)
+  (ycmd--goto "GoToDefinition" :other-window))
 
 (defun ycmd-goto-implementation ()
   "Go to the implementation of the symbol at the current position."
   (interactive)
   (ycmd--goto "GoToImplementation"))
 
+(defun ycmd-goto-implementation-other-window ()
+  "Go to the implementation of the symbol at the current position.
+Open result in another window."
+  (interactive)
+  (ycmd--goto "GoToImplementation" :other-window))
+
 (defun ycmd-goto-include ()
   "Go to the include of the symbol at the current position."
   (interactive)
   (ycmd--goto "GoToInclude"))
 
+(defun ycmd-goto-include-other-window ()
+  "Go to the include of the symbol at the current position."
+  (interactive)
+  (ycmd--goto "GoToInclude" :other-window))
+
 (defun ycmd-goto-imprecise ()
-  "Fast implementation of Go To at the cost of precision.
+  "Fast implementation of GoTo at the cost of precision.
 Useful in case compile-time is considerable."
   (interactive)
   (ycmd--goto "GoToImprecise"))
+
+(defun ycmd-goto-imprecise-other-window ()
+  "Fast implementation of GoTo at the cost of precision.
+Useful in case compile-time is considerable.  Open result in
+another window."
+  (interactive)
+  (ycmd--goto "GoToImprecise" :other-window))
 
 (defun ycmd-goto-references ()
   "Get references."
   (interactive)
   (ycmd--goto "GoToReferences"))
 
+(defun ycmd-goto-references-other-window ()
+  "Get references.
+Open result with one item in another window."
+  (interactive)
+  (ycmd--goto "GoToReferences" :other-window))
+
 (defun ycmd-goto-type ()
   "Go to the type of the symbol at the current position."
   (interactive)
   (ycmd--goto "GoToType"))
+
+(defun ycmd-goto-type-other-window ()
+  "Go to the type of the symbol at the current position.
+Open result in another window."
+  (interactive)
+  (ycmd--goto "GoToType" :other-window))
 
 (defun ycmd--save-marker ()
   "Save marker."
@@ -1117,23 +1190,32 @@ Useful in case compile-time is considerable."
     (with-no-warnings
       (ring-insert find-tag-marker-ring (point-marker)))))
 
-(defun ycmd--handle-goto-success (response)
-  "Handle a successfull GoTo RESPONSE."
+(defun ycmd--handle-goto-success (response &optional other-window)
+  "Handle a successfull GoTo RESPONSE.
+If OTHER-WINDOW is non-nil open single result in another window."
   (let* ((is-vector (vectorp response))
          (num-items (if is-vector (length response) 1)))
     (ycmd--save-marker)
     (when is-vector
       (setq response (append response nil)))
     (if (eq 1 num-items)
-        (ycmd--goto-location response 'find-file)
+        (let ((fn (if other-window
+                      'find-file-other-window
+                    'find-file)))
+          (ycmd--goto-location response fn))
       (ycmd--view response major-mode))))
 
-(defun ycmd--goto (type)
-  "Implementation of GoTo according to the request TYPE."
+(defun ycmd--goto (type &optional other-window)
+  "Implementation of GoTo according to the request TYPE.
+If optional argument OTHER-WINDOW is non-nil open results in
+another window."
   (save-excursion
     (--when-let (bounds-of-thing-at-point 'symbol)
       (goto-char (car it)))
-    (ycmd--send-request type 'ycmd--handle-goto-success)))
+    (let ((handler (lambda (response)
+                     (ycmd--handle-goto-success
+                      response other-window))))
+      (ycmd--send-request type handler))))
 
 (defun ycmd--goto-location (location find-function)
   "Move cursor to LOCATION with FIND-FUNCTION.
