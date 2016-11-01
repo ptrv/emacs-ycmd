@@ -1310,9 +1310,12 @@ If optional ARG is non-nil, get type without reparsing buffer."
 
 (defun ycmd--apply-fixit (button)
   "Apply BUTTON's FixIt chunk."
-  (-when-let* ((chunk (button-get button 'fixit)))
-    (ycmd--replace-chunk-list chunk)
-    (quit-window t (get-buffer-window "*ycmd-fixits*"))))
+  (-when-let* ((chunk (button-get button 'fixit))
+               (location (button-get button 'location)))
+    (let* ((filepath (cdr (assq 'filepath location)))
+           (buffer (find-file-noselect filepath)))
+      (ycmd--replace-chunk-list chunk buffer)
+      (quit-window t (get-buffer-window "*ycmd-fixits*")))))
 
 (define-derived-mode ycmd-fixit-mode ycmd-view-mode "ycmd-fixits"
   "Major mode for viewing and navigation of fixits.
@@ -1372,7 +1375,7 @@ working buffer."
         (and (= line-num-1 line-num-2)
              (< column-num-1 column-num-2)))))
 
-(defun ycmd--replace-chunk-list (chunks)
+(defun ycmd--replace-chunk-list (chunks buffer)
   "Replace list of CHUNKS.
 
 If BUFFER is spacified use it as working buffer, else use current
@@ -1385,9 +1388,7 @@ buffer."
       (let-alist c
         (-when-let* ((chunk-start (ycmd--get-chunk-start-line-and-column c))
                      (chunk-end (ycmd--get-chunk-end-line-and-column c))
-                     (replacement-text .replacement_text)
-                     (chunk-filepath .range.start.filepath)
-                     (buffer (find-file-noselect chunk-filepath)))
+                     (replacement-text .replacement_text))
           (unless (= (car chunk-start) last-line)
             (setq last-line (car chunk-end))
             (setq char-delta 0))
@@ -1406,22 +1407,78 @@ buffer."
         (when (> (length (cdr f)) 1)
           (throw 'done t))))))
 
-(defun ycmd--handle-fixit-success (response)
+(defun ycmd--handle-fixit-success (response &optional ediff)
   "Handle a successful FixIt RESPONSE."
   (-if-let (fixits (cdr (assq 'fixits response)))
-      (if (and (not ycmd-confirm-fixit)
+      (if (and (or ediff (not ycmd-confirm-fixit))
                (not (ycmd--fixits-have-same-location-p fixits)))
           (dolist (fixit fixits)
-            (--when-let (cdr (assq 'chunks fixit))
-              (ycmd--replace-chunk-list it)))
+            (-when-let* ((chunks (cdr (assq 'chunks fixit)))
+                         (location (cdr (assq 'location fixit))))
+              (let* ((filepath (cdr (assq 'filepath location)))
+                     (buffer (find-file-noselect filepath))
+                     (buffertext (when ediff
+                                   (with-current-buffer buffer (buffer-string))))
+                     (tempbufname (format "*Ycmd FixIt - %s*" filepath))
+                     (tempbuf (get-buffer tempbufname)))
+                (when tempbuf
+                  (kill-buffer tempbuf)
+                  (setq tempbuf nil))
+                (when ediff
+                  (setq tempbuf (get-buffer-create tempbufname))
+                  (with-current-buffer tempbuf
+                    (insert buffertext)))
+                (ycmd--replace-chunk-list chunks (or tempbuf buffer))
+                (when tempbuf
+                  (let ((conf (current-window-configuration)))
+                    (ediff-buffers
+                     buffer tempbuf
+                     `((lambda ()
+                         (setq-local
+                          ediff-quit-hook
+                          (lambda ()
+                            (ediff-kill-buffer-carefully ,tempbuf)
+                            (ycmd--ediff-quit)
+                            (set-window-configuration ,conf)))))
+                     'fixit))))))
         (save-current-buffer
           (ycmd--show-fixits fixits)))
     (message "No FixIts available")))
 
-(defun ycmd-fixit()
+(defun ycmd--ediff-quit ()
+  (let* ((ctl-buf ediff-control-buffer)
+         (ctl-win (ediff-get-visible-buffer-window ctl-buf))
+         (ctl-frm ediff-control-frame)
+         (main-frame (cond ((window-live-p ediff-window-A)
+                            (window-frame ediff-window-A))
+                           ((window-live-p ediff-window-B)
+                            (window-frame ediff-window-B)))))
+    (ediff-kill-buffer-carefully ediff-diff-buffer)
+    (ediff-kill-buffer-carefully ediff-custom-diff-buffer)
+    (ediff-kill-buffer-carefully ediff-fine-diff-buffer)
+    (ediff-kill-buffer-carefully ediff-tmp-buffer)
+    (ediff-kill-buffer-carefully ediff-error-buffer)
+    (ediff-kill-buffer-carefully ediff-msg-buffer)
+    (ediff-kill-buffer-carefully ediff-debug-buffer)
+    (when (boundp 'ediff-patch-diagnostics)
+      (ediff-kill-buffer-carefully ediff-patch-diagnostics))
+    (cond ((and (ediff-window-display-p)
+                (frame-live-p ctl-frm))
+           (delete-frame ctl-frm))
+          ((window-live-p ctl-win)
+           (delete-window ctl-win)))
+    (unless (ediff-multiframe-setup-p)
+      (ediff-kill-bottom-toolbar))
+    (ediff-kill-buffer-carefully ctl-buf)
+    (when (frame-live-p main-frame)
+      (select-frame main-frame))))
+
+(defun ycmd-fixit (arg)
   "Get FixIts for current line."
-  (interactive)
-  (ycmd--run-completer-command "FixIt" 'ycmd--handle-fixit-success))
+  (interactive "P")
+  (ycmd--run-completer-command
+   "FixIt" (lambda (response)
+             (ycmd--handle-fixit-success response arg))))
 
 (defun ycmd--handle-refactor-rename-success (response &optional no-confirm)
   "Handle a successful RenameRefactor RESPONSE.
@@ -1437,7 +1494,8 @@ If NO-CONFIRM is non-nil, don't ask the user to confirm the rename."
                                         (length chunks)
                                         (length chunks-by-filepath))))
               (dolist (file-chunks chunks-by-filepath)
-                (ycmd--replace-chunk-list (cdr file-chunks)))))))
+                (let ((buffer (find-file-noselect (car file-chunks))))
+                  (ycmd--replace-chunk-list (cdr file-chunks) buffer)))))))
     (message "No candidates available to rename.")))
 
 (defun ycmd-refactor-rename (new-name)
