@@ -6,7 +6,7 @@
 ;;          Peter Vasil <mail@petervasil.net>
 ;; Version: 1.2-cvs
 ;; URL: https://github.com/abingham/emacs-ycmd
-;; Package-Requires: ((emacs "24.3") (dash "2.12.1") (s "1.10.0") (deferred "0.3.2") (cl-lib "0.5") (let-alist "1.0.4") (request "0.2.0") (request-deferred "0.2.0") (pkg-info "0.4"))
+;; Package-Requires: ((emacs "24.3") (dash "2.12.1") (s "1.10.0") (f "0.19.0") (deferred "0.3.2") (cl-lib "0.5") (let-alist "1.0.4") (request "0.2.0") (request-deferred "0.2.0") (pkg-info "0.4"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -108,6 +108,7 @@
   (require 'let-alist))
 (require 'dash)
 (require 's)
+(require 'f)
 (require 'deferred)
 (require 'hmac-def)
 (require 'json)
@@ -167,7 +168,6 @@ Example value:
   :type '(repeat string))
 
 (defcustom ycmd-server-args '("--log=debug"
-                              "--keep_logfile"
                               "--idle_suicide_seconds=10800")
   "Extra arguments to pass to the ycmd server."
   :type '(repeat string))
@@ -175,6 +175,10 @@ Example value:
 (defcustom ycmd-server-port nil
   "The ycmd server port.  If nil, use random port."
   :type '(number))
+
+(defcustom ycmd-keep-log-file t
+  "If non-nil keep log files."
+  :type 'boolean)
 
 (defcustom ycmd-file-parse-result-hook nil
   "Functions to run with file-parse results.
@@ -1966,7 +1970,12 @@ the name of the newly created file."
           (message "Ycmd server %s" (s-replace "\n" "" event))))
       (ycmd--with-all-ycmd-buffers
         (ycmd--report-status status))
-      (ycmd--kill-timer ycmd--keepalive-timer))))
+      (ycmd--kill-timer ycmd--keepalive-timer))
+    (when ycmd-keep-log-file
+      (let ((tempfile (ycmd--make-log-file-path))
+            (text (with-current-buffer ycmd--server-buffer-name
+                    (buffer-string))))
+        (f-write-text text 'utf-8 tempfile)))))
 
 (defun ycmd--server-process-filter (process string)
   "Filter function for the Ycmd server PROCESS output STRING."
@@ -1991,6 +2000,13 @@ the name of the newly created file."
       (ycmd--report-status 'unparsed))
     (ycmd--perform-deferred-parse)))
 
+(defun ycmd--make-log-file-path ()
+  "Return a unique log file path."
+  (let* ((base-name (format "ycmd_server_%s_" ycmd--server-actual-port))
+         (temp-name (concat (make-temp-name base-name) ".log")))
+    (convert-standard-filename
+     (expand-file-name temp-name temporary-file-directory))))
+
 (defun ycmd--start-server ()
   "Start a new server and return the process."
   (unless ycmd-server-command
@@ -2009,6 +2025,7 @@ See the docstring of the variable for an example"))
            (options-file (ycmd--create-options-file hmac-secret))
            (args (append (and port (list (format "--port=%d" port)))
                          (list (concat "--options_file=" options-file))
+                         (and ycmd-keep-log-file (list "--keep_logfile"))
                          ycmd-server-args))
            (server-program+args (append ycmd-server-command args))
            (proc (apply #'start-process ycmd--server-process-name proc-buff
