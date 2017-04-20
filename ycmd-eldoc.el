@@ -201,18 +201,25 @@ foo(bar, |baz); -> foo|(bar, baz);"
 (define-minor-mode ycmd-eldoc-mode
   "Toggle ycmd eldoc mode."
   :lighter ""
-  (if ycmd-eldoc-mode
-      (progn
-        (set (make-local-variable 'eldoc-documentation-function)
-             'ycmd-eldoc--documentation-function)
-        (eldoc-mode +1)
-        (add-hook 'ycmd-after-teardown-hook
-                  #'ycmd-eldoc--teardown nil 'local))
+  (cond
+   (ycmd-eldoc-mode
+    (cond ((eval-when-compile (fboundp 'add-function))
+           (or eldoc-documentation-function
+               (setq-local eldoc-documentation-function #'ignore))
+           (add-function :before-until (local 'eldoc-documentation-function)
+                         #'ycmd-eldoc--documentation-function))
+          (t (set (make-local-variable 'eldoc-documentation-function)
+                  'ycmd-eldoc--documentation-function)))
+    (eldoc-mode +1)
+    (add-hook 'ycmd-after-teardown-hook #'ycmd-eldoc--teardown nil 'local))
+   (t
     (eldoc-mode -1)
-    (kill-local-variable 'eldoc-documentation-function)
-    (remove-hook 'ycmd-after-teardown-hook
-                 #'ycmd-eldoc--teardown 'local)
-    (ycmd-eldoc--teardown)))
+    (if (eval-when-compile (fboundp 'remove-function))
+        (remove-function (local 'eldoc-documentation-function)
+                         #'ycmd-eldoc--documentation-function)
+      (kill-local-variable 'eldoc-documentation-function))
+    (remove-hook 'ycmd-after-teardown-hook #'ycmd-eldoc--teardown 'local)
+    (ycmd-eldoc--teardown))))
 
 (provide 'ycmd-eldoc)
 
