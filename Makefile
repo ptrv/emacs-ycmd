@@ -46,6 +46,10 @@ ycmd-eldoc : ycmd $(OBJECTS_ELDOC)
 dist :
 	$(CASK) package
 
+init :
+	$(CASK) install
+	$(CASK) update
+
 # Test targets
 test : $(OBJECTS) $(OBJECTS_COMP) $(OBJECTS_FLYC) $(OBJECTS_ELDOC)
 	$(EMACSBATCH) --script test/run.el '$(YCMDPATH)' '$(ERTSELECTOR)' '$(REQUEST_BACKEND)'

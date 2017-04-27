@@ -25,6 +25,7 @@ env:
     # Run unit tests against oldest supported stable, latest stable, and trunk
     - EMACS_VERSION=24.3
     - EMACS_VERSION=25.1
+    - EMACS_VERSION=25.2
     - EMACS_VERSION=snapshot COMPILEFLAGS='error-on-warn'
 before_install:
   # gcc-4.9
@@ -34,8 +35,9 @@ before_install:
   - ln -s "/usr/bin/gcov-4.9" "${HOME}/bin/gcov"
 
   - export PATH="$HOME/bin:$PATH"
-  - wget 'https://raw.githubusercontent.com/flycheck/emacs-travis/master/emacs-travis.mk'
-  - if [[ -n $EMACS_VERSION ]]; then make -f emacs-travis.mk install_emacs; fi
+  # - wget 'https://raw.githubusercontent.com/flycheck/emacs-travis/master/emacs-travis.mk'
+  - wget 'https://raw.githubusercontent.com/ptrv/emacs-travis/build-with-gnutls/emacs-travis.mk'
+  - if [[ -n $EMACS_VERSION ]]; then make -f emacs-travis.mk install_emacs VERBOSE=yes; fi
   - if [[ -n $EMACS_VERSION ]]; then make -f emacs-travis.mk install_cask; fi
   - if [[ -n $EMACS_VERSION ]]; then emacs --version; fi
 

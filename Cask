@@ -1,5 +1,5 @@
-(source melpa)
 (source gnu)
+(source melpa)
 
 (package-file "ycmd.el")
 
