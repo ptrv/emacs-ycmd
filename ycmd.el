@@ -1946,11 +1946,22 @@ functions in `ycmd-file-parse-result-hook'."
                                      (ycmd--get-keywords buff))
                       (list (cons "syntax_keywords" it))))))
       (ycmd--report-status 'parsing)
-      (ycmd--event-notification
-       "FileReadyToParse" content
-       (lambda (response)
-         (with-current-buffer buff
-           (ycmd--handle-notify-response response)))))))
+      (deferred:$
+        (ycmd--event-notification
+         "FileReadyToParse" content
+         (lambda (response)
+           (with-current-buffer buff
+             (ycmd--handle-notify-response response))))
+        ;; Make sure we reset the status here in case the FileReadyToParse
+        ;; request handler has not been called, because otherwise we are stuck
+        ;; on the parsing status. Also set the parse deferred flag because most
+        ;; likely we need to issue another parse request.
+        (deferred:nextc it
+          (lambda ()
+            (with-current-buffer buff
+              (when (ycmd-parsing-in-progress-p)
+                (ycmd--report-status 'unparsed)
+                (ycmd--parse-deferred)))))))))
 
 (defun ycmd-major-mode-to-file-types (mode)
   "Map a major mode MODE to a list of file-types suitable for ycmd.
