@@ -58,6 +58,8 @@ is only semantic after a semantic trigger."
 
 (defvar-local ycmd-eldoc--get-type-supported-p t)
 
+(defvar ycmd-eldoc--completion-cache nil)
+
 (defun ycmd-eldoc--documentation-function ()
   "Eldoc function for `ycmd-mode'."
   (when (and ycmd-mode (not (ycmd-parsing-in-progress-p)))
@@ -115,7 +117,7 @@ is only semantic after a semantic trigger."
                 (let ((ycmd-force-semantic-completion
                        (or ycmd-force-semantic-completion
                            (ycmd-eldoc-always-semantic-server-query-p))))
-                  (ycmd-get-completions))))))
+                  (ycmd-eldoc-get-completions-cache-or-new))))))
         (deferred:nextc it
           (lambda (completions)
             (-when-let (candidates (cdr (assq 'completions completions)))
@@ -130,6 +132,34 @@ is only semantic after a semantic trigger."
             (when text
               (setq text (ycmd--fontify-code text))
               (ycmd-eldoc--cache-store symbol text))))))))
+
+
+(cl-defstruct (cached-completion
+               (:constructor nil)
+               (:constructor make-cached-completion (data)))
+  data
+  (tick (buffer-chars-modified-tick))
+  (marker (point-marker)))
+
+(defun ycmd-eldoc--completion-cache-valid-p ()
+  "Return non-nil if completion cache is valid for use."
+  (--when-let ycmd-eldoc--completion-cache
+    (and (equal (buffer-chars-modified-tick)
+                (cached-completion-tick it))
+         (equal (point-marker)
+                (cached-completion-marker it)))))
+
+(defun ycmd-eldoc-get-completions-cache-or-new ()
+  "Return cached completion data if present.
+If SYNC is non-nil send completion request syncronously."
+  (if (ycmd-eldoc--completion-cache-valid-p)
+      (cached-completion-data ycmd-eldoc--completion-cache)
+    (ycmd-get-completions)))
+
+(defun ycmd-eldoc--after-completion-function (response)
+  (unless (ycmd--exception? response)
+    (setq ycmd-eldoc--completion-cache
+          (make-cached-completion response))))
 
 (defun ycmd-eldoc--cache-store (symbol text)
   "Store SYMBOL and TEXT to `ycmd-eldoc--cache'."

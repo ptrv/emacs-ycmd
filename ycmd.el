@@ -407,6 +407,12 @@ This variable is a normal hook.  See Info node `(elisp)Hooks'."
   :type 'hook
   :risky t)
 
+(defcustom ycmd-after-completion-hook nil
+  "Functions to run after receiving a completion request response.
+
+This variable is a normal hook. See Info node `(elisp)Hooks'."
+  :type 'hook :risky t)
+
 (defcustom ycmd-completing-read-function #'completing-read
   "Function to read from minibuffer with completion.
 
@@ -1191,10 +1197,15 @@ To see what the returned structure looks like, you can use
 `ycmd-display-completions'."
   (let ((extra-data (and ycmd-force-semantic-completion
                          (list (cons "force_semantic" t)))))
-    (ycmd--request (make-ycmd-request-data
-                    :handler "completions"
-                    :content (append (ycmd--get-basic-request-data)
-                                     extra-data)))))
+    (deferred:$
+      (ycmd--request (make-ycmd-request-data
+                      :handler "completions"
+                      :content (append (ycmd--get-basic-request-data)
+                                       extra-data)))
+      (deferred:nextc it
+        (lambda (response)
+          (run-hook-with-args 'ycmd-after-completion-hook response)
+          response)))))
 
 (defun ycmd--handle-exception (response)
   "Handle exception in completion RESPONSE.

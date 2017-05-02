@@ -874,6 +874,41 @@ response."
        (should (string= (nth 0 result) "bfo"))
        (should (string= (nth 1 result) "cfo"))))))
 
+(ycmd-ert-deftest eldoc-get-completions-cache-valid-cpp "test.cpp" 'c++-mode
+  :line 8 :column 7
+  (ycmd-eldoc-mode)
+  (let ((response (ycmd-get-completions-sync)))
+    (should (ycmd-eldoc--completion-cache-valid-p))))
+
+(ycmd-ert-deftest get-completions-cache-invalid-cpp "test.cpp" 'c++-mode
+  :line 8 :column 7
+  (ycmd-eldoc-mode)
+  (let ((response (ycmd-get-completions-sync)))
+    (backward-char 1)
+    (should-not (ycmd-eldoc--completion-cache-valid-p))))
+
+(ycmd-ert-deftest get-completions-get-cache-cpp "test.cpp" 'c++-mode
+  :line 8 :column 7
+  (ycmd-eldoc-mode)
+  (let ((num-called 0))
+    (cl-letf (((symbol-function 'ycmd-get-completions)
+               (lambda (&optional sync)
+                 (cl-incf num-called)
+                 (let ((response 'foo))
+                   (setq ycmd-eldoc--completion-cache
+                         (make-cached-completion response))
+                   response))))
+      (let* ((completion-fn (lambda ()
+                              (ycmd-deferred:sync!
+                               (deferred:next
+                                 (lambda ()
+                                   (ycmd-eldoc-get-completions-cache-or-new))))))
+             (response-1 (funcall completion-fn))
+             (response-2 (funcall completion-fn)))
+        (should (= num-called 1))))))
+
+;; flycheck-ycmd
+
 (defun flycheck-ycmd-test-mode ()
   (flycheck-ycmd-setup)
   (ycmd-test-mode))
