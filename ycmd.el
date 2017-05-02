@@ -418,6 +418,10 @@ function."
   :risky t
   :package-version '(ycmd . "1.2"))
 
+(defcustom ycmd-filepath-completion-use-working-dir nil
+  "If non-nil `default-directory' for relative filepath completion."
+  :type 'boolean)
+
 (defconst ycmd--file-types-with-diagnostics
   '("c"
     "cpp"
@@ -1142,7 +1146,9 @@ and blocks until the request has finished."
   (let ((content
          (append (plist-get (ycmd--get-request-data) :content)
                  (and ycmd-force-semantic-completion
-                      (list (cons "force_semantic" t))))))
+                      (list (cons "force_semantic" t)))
+                 (and ycmd-filepath-completion-use-working-dir
+                      (list (cons "working_dir" default-directory))))))
     (ycmd--request "/completions" content :sync sync)))
 
 (defun ycmd--handle-exception (response)
@@ -2035,8 +2041,9 @@ file."
         (rust-src-path (or ycmd-rust-src-path ""))
         (racerd-binary-path (or ycmd-racerd-binary-path ""))
         (python-binary-path (or ycmd-python-binary-path ""))
-        (auto-trigger (if ycmd-auto-trigger-semantic-completion 1 0)))
-    `((filepath_completion_use_working_dir . 0)
+        (auto-trigger (if ycmd-auto-trigger-semantic-completion 1 0))
+        (use-working-dir (if ycmd-filepath-completion-use-working-dir 1 0)))
+    `((filepath_completion_use_working_dir . ,use-working-dir)
       (auto_trigger . ,auto-trigger)
       (min_num_of_chars_for_completion . ,ycmd-min-num-chars-for-completion)
       (min_num_identifier_candidate_chars . 0)
