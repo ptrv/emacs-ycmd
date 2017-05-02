@@ -561,6 +561,8 @@ and `delete-process'.")
 
 (defvar-local ycmd--buffer-visit-flag nil)
 
+(defvar ycmd--completion-cache nil)
+
 (defvar ycmd--available-completers (make-hash-table :test 'eq))
 
 (defvar ycmd--mode-keywords-loaded nil
@@ -907,6 +909,7 @@ _LEN is ununsed."
   (ycmd--kill-timer ycmd--on-focus-timer)
   (setq ycmd--mode-keywords-loaded nil)
   (clrhash ycmd--available-completers)
+  (setq ycmd--completion-cache nil)
   (ycmd--with-all-ycmd-buffers
     (ycmd--teardown)
     (setq ycmd--buffer-visit-flag nil)))
@@ -1122,6 +1125,13 @@ Returns the new value of `ycmd-force-semantic-completion'."
         symbols
       (cdr (assq symbols ycmd-keywords-alist)))))
 
+(cl-defstruct (cached-completion
+               (:constructor nil)
+               (:constructor make-cached-completion (data)))
+  data
+  (tick (buffer-chars-modified-tick))
+  (marker (point-marker)))
+
 (defun ycmd-get-completions (&optional sync)
   "Get completions in current buffer from the ycmd server.
 
@@ -1151,13 +1161,33 @@ To see what the returned structure looks like, you can use
 
 If SYNC is non-nil the function does not return a deferred object
 and blocks until the request has finished."
-  (let ((extra-data (and ycmd-force-semantic-completion
-                         (list (cons "force_semantic" t)))))
+  (let* ((extra-data (and ycmd-force-semantic-completion
+                          (list (cons "force_semantic" t))))
+         (start (time-to-seconds))
+         (cb (lambda (response)
+               (setq ycmd--completion-cache
+                     (make-cached-completion response))
+               response)))
     (ycmd--request (make-ycmd-request-data
                     :location "/completions"
                     :content (append (ycmd--get-basic-request-data)
                                      extra-data))
-                   :sync sync)))
+                   :sync sync :callback cb)))
+
+(defun ycmd--completion-cache-valid-p ()
+  "Return non-nil if completion cache is valid for use."
+  (--when-let ycmd--completion-cache
+    (and (equal (buffer-chars-modified-tick)
+                (cached-completion-tick it))
+         (equal (point-marker)
+                (cached-completion-marker it)))))
+
+(defun ycmd-get-completions-cache-or-new (&optional sync)
+  "Return cached completion data if present.
+If SYNC is non-nil send completion request syncronously."
+  (if (ycmd--completion-cache-valid-p)
+      (cached-completion-data ycmd--completion-cache)
+    (ycmd-get-completions sync)))
 
 (defun ycmd--handle-exception (response)
   "Handle exception in completion RESPONSE.
@@ -2360,7 +2390,8 @@ Slots:
                          (type "POST")
                          (params nil)
                          (sync nil)
-                         (timeout request-timeout))
+                         (timeout request-timeout)
+                         (callback #'identity))
   "Send an asynchronous HTTP request to the ycmd server.
 
 This starts the server if necessary.
@@ -2394,7 +2425,7 @@ anything like that)."
          (response-fn (lambda (response)
                         (let ((data (request-response-data response)))
                           (ycmd--log-content "HTTP RESPONSE CONTENT" data)
-                          data)))
+                          (funcall callback data))))
          (parser (lambda ()
                    (let ((json-array-type 'list))
                      (json-read))))

@@ -115,7 +115,7 @@ is only semantic after a semantic trigger."
                 (let ((ycmd-force-semantic-completion
                        (or ycmd-force-semantic-completion
                            (ycmd-eldoc-always-semantic-server-query-p))))
-                  (ycmd-get-completions))))))
+                  (ycmd-get-completions-cache-or-new))))))
         (deferred:nextc it
           (lambda (completions)
             (-when-let (candidates (cdr (assq 'completions completions)))
