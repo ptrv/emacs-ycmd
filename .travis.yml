@@ -1,5 +1,6 @@
 language: emacs-lisp
 sudo: false
+dist: trusty
 cache:
   directories:
     - .cask/
