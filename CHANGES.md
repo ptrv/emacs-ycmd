@@ -1,4 +1,4 @@
-# 1.2 (unreleased)
+# 1.2 (Jun 14, 2017)
 
 * New `ycmd-eldoc-mode`.
 * `ycmd-eldoc` mode retrieves eldoc message asynchronously.
