@@ -46,7 +46,13 @@ before_install:
   - travis/install_ycmd.sh
 
 install:
-  - if [[ -n $EMACS_VERSION ]]; then make deps; fi
+  - if [[ -n $EMACS_VERSION ]]; then
+        if [[ $EMACS_VERSION == "snapshot" ]]; then
+            make EMACSFLAGS="-l test/init.el" deps;
+        else
+            make deps;
+        fi;
+    fi
 script:
   - if [[ -n $EMACS_VERSION ]]; then make all; fi
   - if [[ -n $EMACS_VERSION ]]; then make YCMDPATH="$HOME/ycmd/ycmd" REQUEST_BACKEND=url-retrieve test; fi

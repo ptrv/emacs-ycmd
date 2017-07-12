@@ -53,6 +53,8 @@
       (load (expand-file-name "ycmd-eldoc" source-directory))
       (load (expand-file-name "ycmd-test" (file-name-directory ycmd-runner-file))))
 
+    (while (> (length argv) 3)
+      (pop argv))
     (let* ((debug-on-error t)
            (ycmd-path-raw (pop argv))
            (ycmd-path (if (f-absolute? ycmd-path-raw)
