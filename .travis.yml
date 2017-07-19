@@ -46,17 +46,11 @@ before_install:
   - travis/install_ycmd.sh
 
 install:
-  - if [[ -n $EMACS_VERSION ]]; then
-        if [[ $EMACS_VERSION == "snapshot" ]]; then
-            make EMACSFLAGS="-l test/init.el" deps;
-        else
-            make deps;
-        fi;
-    fi
+  - if [[ -n $EMACS_VERSION ]]; then make EMACSFLAGS=$EMACSFLAGS deps; fi
 script:
-  - if [[ -n $EMACS_VERSION ]]; then make all; fi
-  - if [[ -n $EMACS_VERSION ]]; then make YCMDPATH="$HOME/ycmd/ycmd" REQUEST_BACKEND=url-retrieve test; fi
-  - if [[ -n $EMACS_VERSION ]]; then make YCMDPATH="$HOME/ycmd/ycmd" REQUEST_BACKEND=curl test; fi
+  - if [[ -n $EMACS_VERSION ]]; then make EMACSFLAGS=$EMACSFLAGS all; fi
+  - if [[ -n $EMACS_VERSION ]]; then make EMACSFLAGS=$EMACSFLAGS YCMDPATH="$HOME/ycmd/ycmd" REQUEST_BACKEND=url-retrieve test; fi
+  - if [[ -n $EMACS_VERSION ]]; then make EMACSFLAGS=$EMACSFLAGS YCMDPATH="$HOME/ycmd/ycmd" REQUEST_BACKEND=curl test; fi
 matrix:
   # Finish the build even if any build with allowed failures are still running
   fast_finish: true
